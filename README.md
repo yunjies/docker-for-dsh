@@ -1,6 +1,6 @@
 # docker-for-dsh
 
-A reusable DSH Web container based on `node:24.21.0-bookworm-slim`. The DSH process runs as container-root to support runtime package setup. The container is not privileged and must not receive the Docker socket.
+A reusable DSH Web container based on `node:24.21.0-bookworm-slim`. The DSH process runs as container-root, Git is baked into the image, and apt remains available for runtime package setup. The container is not privileged and must not receive the Docker socket.
 
 ## Build and publish
 

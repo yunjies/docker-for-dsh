@@ -7,7 +7,10 @@ ENV DSH_HOME=/data/.dsh \
 
 LABEL org.opencontainers.image.source="https://github.com/yunjies/docker-for-dsh"
 
-RUN corepack enable \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable \
     && corepack prepare pnpm@11.7.0 --activate
 
 COPY bootstrap.sh /usr/local/bin/dsh-bootstrap
