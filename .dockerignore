@@ -1,0 +1,12 @@
+.git
+.github
+.sessions
+.env
+.env.*
+**/.env
+**/.env.*
+**/node_modules
+**/.dsh
+**/appdata
+**/*secret*
+**/*credential*

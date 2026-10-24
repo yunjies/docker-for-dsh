@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>dsh-sec</Name>
+  <Repository>ghcr.io/yunjies/docker-for-dsh:latest</Repository>
+  <Registry>https://ghcr.io/yunjies/docker-for-dsh</Registry>
+  <Network>dsh-private</Network>
+  <MyIP></MyIP>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support></Support>
+  <Project>https://github.com/yunjies/docker-for-dsh</Project>
+  <TemplateURL>https://raw.githubusercontent.com/yunjies/docker-for-dsh/main/unraid/dsh.xml</TemplateURL>
+  <ReadMe>https://raw.githubusercontent.com/yunjies/docker-for-dsh/main/README.md</ReadMe>
+  <Overview>DSH Web in a persistent, unprivileged container with a selectable DSH version.</Overview>
+  <Category>Tools:System</Category>
+  <WebUI>http://[IP]:[PORT:3080]/</WebUI>
+  <Config Name="Web UI" Target="3080" Default="13081" Mode="tcp" Description="DSH Web" Type="Port" Display="always" Required="true" Mask="false">13081</Config>
+  <Config Name="DSH data" Target="/data" Default="/mnt/user/appdata/dsh-sec/data" Mode="rw" Description="Persistent DSH home, profile, and settings" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/dsh-sec/data</Config>
+  <Config Name="Workspace" Target="/workspace" Default="/mnt/user/appdata/dsh-sec/workspace" Mode="rw" Description="Persistent DSH workspace" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/dsh-sec/workspace</Config>
+  <Config Name="DSH version" Target="DSH_VERSION" Default="latest" Mode="" Description="NPM dist-tag or exact DSH version" Type="Variable" Display="always" Required="true" Mask="false">latest</Config>
+  <Config Name="Bind host" Target="DSH_BIND_HOST" Default="" Mode="" Description="Leave blank to bind to the detected container address" Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Public URL" Target="DSH_PUBLIC_URL" Default="" Mode="" Description="Externally reachable DSH Web base URL" Type="Variable" Display="always" Required="true" Mask="false"></Config>
+  <Config Name="Trusted host" Target="DSH_TRUSTED_HOST" Default="" Mode="" Description="Trusted host name or address" Type="Variable" Display="always" Required="true" Mask="false"></Config>
+  <Config Name="Token registration URL (optional)" Target="DSH_TOKEN_REGISTER_URL" Default="" Mode="" Description="Optional endpoint for registering launch tokens; blank disables registration" Type="Variable" Display="always" Required="false" Mask="false"></Config>
+</Container>
