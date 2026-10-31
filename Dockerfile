@@ -22,6 +22,6 @@ RUN chmod 0755 /usr/local/bin/dsh-bootstrap \
 
 WORKDIR /workspace
 VOLUME ["/data", "/workspace"]
-EXPOSE 3080
+EXPOSE 3080 22/tcp
 USER root
 ENTRYPOINT ["/usr/local/bin/dsh-bootstrap"]
