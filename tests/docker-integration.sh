@@ -229,13 +229,10 @@ filter_safe_diagnostics() {
     function peer_exit(component, status) { print "runner-peer-exit component=" component " " status; found = 1 }
     BEGIN {
       stage_map["bootstrap_init"] = "bootstrap-init"
-      stage_map["keyring_secret_file_validation"] = "keyring-secret-file-validation"
+      stage_map["openssh_runtime_install"] = "openssh-runtime-install"
+      stage_map["openssh_runtime_repository_update"] = "openssh-runtime-repository-update"
+      stage_map["openssh_runtime_package_install"] = "openssh-runtime-package-install"
       stage_map["data_volume"] = "data-volume"
-      stage_map["runtime_package_repository_update"] = "runtime-package-repository-update"
-      stage_map["gh_cli_prerequisites"] = "gh-cli-prerequisites"
-      stage_map["gh_cli_repository_update"] = "gh-cli-repository-update"
-      stage_map["runtime_package_install"] = "runtime-package-install"
-      stage_map["gh_cli_version_check"] = "gh-cli-version-check"
       stage_map["sshd_runtime_dir"] = "sshd-runtime-dir"
       stage_map["authorized_keys_source"] = "authorized-keys-source"
       stage_map["authorized_keys_snapshot"] = "authorized-keys-snapshot"
@@ -264,24 +261,9 @@ filter_safe_diagnostics() {
         }
         next
       }
-      if ($0 == "Runtime package installation requires apt-get.") { emit("bootstrap-runtime-apt-get-unavailable"); next }
-      if ($0 == "Could not update package metadata for runtime package installation.") { emit("bootstrap-runtime-repository-update-failed"); next }
-      if ($0 == "Could not install GitHub CLI repository prerequisites.") { emit("bootstrap-gh-cli-prerequisites-failed"); next }
-      if ($0 == "Could not prepare GitHub CLI signing keyring.") { emit("bootstrap-gh-cli-keyring-prepare-failed"); next }
-      if ($0 == "Could not download GitHub CLI signing keyring.") { emit("bootstrap-gh-cli-keyring-download-failed"); next }
-      if ($0 == "GitHub CLI signing keyring checksum did not match the pinned official checksum.") { emit("bootstrap-gh-cli-keyring-checksum-failed"); next }
-      if ($0 == "Could not install GitHub CLI signing keyring.") { emit("bootstrap-gh-cli-keyring-install-failed"); next }
-      if ($0 == "Could not configure the official GitHub CLI package repository.") { emit("bootstrap-gh-cli-repository-config-failed"); next }
-      if ($0 == "Could not update package metadata for the official GitHub CLI repository.") { emit("bootstrap-gh-cli-repository-update-failed"); next }
-      if ($0 == "Could not install required runtime packages.") { emit("bootstrap-runtime-package-install-failed"); next }
-      if ($0 == "GitHub CLI version 2.26.0 or newer is required.") { emit("bootstrap-gh-cli-version-invalid"); next }
-      if ($0 == "Keyring unlock file must be root-owned, read-only, mode 0400 or 0600, and contain one non-empty line.") { emit("bootstrap-keyring-secret-file-invalid"); next }
-      if ($0 == "Keyring unlock file became unavailable before DSH startup.") { emit("runner-keyring-file-unavailable"); next }
-      if ($0 == "D-Bus session bus was unavailable for the Secret Service keyring.") { emit("runner-keyring-bus-unavailable"); next }
-      if ($0 == "Could not unlock the Secret Service keyring.") { emit("runner-keyring-unlock-failed"); next }
-      if ($0 == "Secret Service keyring round-trip failed.") { emit("runner-keyring-roundtrip-failed"); next }
-      if ($0 == "Secret Service keyring probe cleanup failed.") { emit("runner-keyring-probe-cleanup-failed"); next }
-      if ($0 == "keyring-secret-service-probe=passed") { emit("runner-keyring-probe-passed"); next }
+      if ($0 == "OpenSSH startup installation requires apt-get.") { emit("bootstrap-openssh-apt-get-unavailable"); next }
+      if ($0 == "Could not update package metadata for OpenSSH startup installation.") { emit("bootstrap-openssh-repository-update-failed"); next }
+      if ($0 == "Could not install OpenSSH startup packages.") { emit("bootstrap-openssh-package-install-failed"); next }
       if ($0 == "SSH_PORT must be a canonical decimal port without leading zeros from 1 to 65535.") { emit("bootstrap-ssh-port-invalid"); next }
       if ($0 == "/data must be a readable and writable volume.") { emit("bootstrap-data-volume-invalid"); next }
       if ($0 == "Could not create the SSH key source directory under /data.") { emit("bootstrap-ssh-source-directory-create-failed"); next }
@@ -374,24 +356,9 @@ run_diagnostic_fixtures() {
   run_state_fixture_case malformed-pid '1 pid false false' 1
   run_state_fixture_case extra-state-field '1 0 false false secret' 1
   run_diagnostic_fixture_case data-volume '/data must be a readable and writable volume.' 'diagnostic=bootstrap-data-volume-invalid'
-  run_diagnostic_fixture_case runtime-apt-get-unavailable 'Runtime package installation requires apt-get.' 'diagnostic=bootstrap-runtime-apt-get-unavailable'
-  run_diagnostic_fixture_case runtime-repository-update 'Could not update package metadata for runtime package installation.' 'diagnostic=bootstrap-runtime-repository-update-failed'
-  run_diagnostic_fixture_case gh-cli-prerequisites 'Could not install GitHub CLI repository prerequisites.' 'diagnostic=bootstrap-gh-cli-prerequisites-failed'
-  run_diagnostic_fixture_case gh-cli-keyring-prepare 'Could not prepare GitHub CLI signing keyring.' 'diagnostic=bootstrap-gh-cli-keyring-prepare-failed'
-  run_diagnostic_fixture_case gh-cli-keyring-download 'Could not download GitHub CLI signing keyring.' 'diagnostic=bootstrap-gh-cli-keyring-download-failed'
-  run_diagnostic_fixture_case gh-cli-keyring-checksum 'GitHub CLI signing keyring checksum did not match the pinned official checksum.' 'diagnostic=bootstrap-gh-cli-keyring-checksum-failed'
-  run_diagnostic_fixture_case gh-cli-keyring-install 'Could not install GitHub CLI signing keyring.' 'diagnostic=bootstrap-gh-cli-keyring-install-failed'
-  run_diagnostic_fixture_case gh-cli-repository-config 'Could not configure the official GitHub CLI package repository.' 'diagnostic=bootstrap-gh-cli-repository-config-failed'
-  run_diagnostic_fixture_case gh-cli-repository-update 'Could not update package metadata for the official GitHub CLI repository.' 'diagnostic=bootstrap-gh-cli-repository-update-failed'
-  run_diagnostic_fixture_case runtime-package-install 'Could not install required runtime packages.' 'diagnostic=bootstrap-runtime-package-install-failed'
-  run_diagnostic_fixture_case gh-cli-version 'GitHub CLI version 2.26.0 or newer is required.' 'diagnostic=bootstrap-gh-cli-version-invalid'
-  run_diagnostic_fixture_case keyring-secret-file-invalid 'Keyring unlock file must be root-owned, read-only, mode 0400 or 0600, and contain one non-empty line.' 'diagnostic=bootstrap-keyring-secret-file-invalid'
-  run_diagnostic_fixture_case keyring-file-unavailable 'Keyring unlock file became unavailable before DSH startup.' 'diagnostic=runner-keyring-file-unavailable'
-  run_diagnostic_fixture_case keyring-bus-unavailable 'D-Bus session bus was unavailable for the Secret Service keyring.' 'diagnostic=runner-keyring-bus-unavailable'
-  run_diagnostic_fixture_case keyring-unlock 'Could not unlock the Secret Service keyring.' 'diagnostic=runner-keyring-unlock-failed'
-  run_diagnostic_fixture_case keyring-roundtrip 'Secret Service keyring round-trip failed.' 'diagnostic=runner-keyring-roundtrip-failed'
-  run_diagnostic_fixture_case keyring-probe-cleanup 'Secret Service keyring probe cleanup failed.' 'diagnostic=runner-keyring-probe-cleanup-failed'
-  run_diagnostic_fixture_case keyring-probe-passed 'keyring-secret-service-probe=passed' 'diagnostic=runner-keyring-probe-passed'
+  run_diagnostic_fixture_case openssh-apt-get-unavailable 'OpenSSH startup installation requires apt-get.' 'diagnostic=bootstrap-openssh-apt-get-unavailable'
+  run_diagnostic_fixture_case openssh-repository-update 'Could not update package metadata for OpenSSH startup installation.' 'diagnostic=bootstrap-openssh-repository-update-failed'
+  run_diagnostic_fixture_case openssh-package-install 'Could not install OpenSSH startup packages.' 'diagnostic=bootstrap-openssh-package-install-failed'
   run_diagnostic_fixture_case ssh-port-invalid 'SSH_PORT must be a canonical decimal port without leading zeros from 1 to 65535.' 'diagnostic=bootstrap-ssh-port-invalid'
   run_diagnostic_fixture_case authkeys-source 'Could not create /data/.ssh/authorized_keys.' 'diagnostic=bootstrap-authorized-keys-source-create-failed'
   run_diagnostic_fixture_case host-key-failure 'Could not create missing SSH host keys.' 'diagnostic=bootstrap-host-key-generation-failed'
@@ -408,7 +375,7 @@ run_diagnostic_fixtures() {
   run_diagnostic_fixture_case runner-peer-signal 'sshd exited (signal SIGTERM); stopping the other service.' 'runner-peer-exit component=sshd signal=SIGTERM'
   run_diagnostic_fixture_case runner-timeout 'Graceful shutdown timed out; sending SIGKILL to remaining SSH/DSH process groups.' 'diagnostic=runner-graceful-shutdown-timeout'
   run_diagnostic_fixture_case runner-failed "Runner failed: path=${diagnostic_path} token=${diagnostic_token} password=${diagnostic_password} key=${diagnostic_key}" 'diagnostic=runner-failed'
-  for stage in bootstrap_init keyring_secret_file_validation data_volume runtime_package_repository_update gh_cli_prerequisites gh_cli_repository_update runtime_package_install gh_cli_version_check sshd_runtime_dir authorized_keys_source authorized_keys_snapshot host_keys password_validation password_setup version_resolution dsh_install profile_initialize profile_configuration profile_dependencies home_patch runner_configuration runner_handoff; do
+  for stage in bootstrap_init openssh_runtime_install openssh_runtime_repository_update openssh_runtime_package_install data_volume sshd_runtime_dir authorized_keys_source authorized_keys_snapshot host_keys password_validation password_setup version_resolution dsh_install profile_initialize profile_configuration profile_dependencies home_patch runner_configuration runner_handoff; do
     stage_label=$(printf '%s' "$stage" | tr '_' '-')
     run_diagnostic_fixture_case "bootstrap-stage-$stage" "dsh-bootstrap: failed stage=$stage exit=1" "diagnostic=bootstrap-stage-$stage_label-exit-1"
   done
@@ -419,7 +386,7 @@ run_diagnostic_fixtures() {
   run_diagnostic_fixture_case bootstrap-stage-invalid-exit 'dsh-bootstrap: failed stage=dsh_install exit=999999' 'no allowlisted diagnostic'
   run_diagnostic_fixture_case unknown-secret "unrecognized log password=${diagnostic_password} token=${diagnostic_token} key=${diagnostic_key} path=${diagnostic_path}" 'no allowlisted diagnostic'
   run_diagnostic_fixture_case mixed-secret "sshd startup validation failed: password=${diagnostic_password} token=${diagnostic_token} path=${diagnostic_path}" 'diagnostic=runner-sshd-config-validation-failed'
-  printf '%s\n' 'SSH and keyring startup diagnostic fixtures passed (63 log cases and 4 state cases).'
+  printf '%s\n' 'SSH startup diagnostic fixtures passed (45 log cases and 4 state cases).'
 }
 
 case "${1:-}" in
@@ -481,10 +448,8 @@ cp "$work_dir/id_ed25519.pub" "$data_dir/.ssh/authorized_keys"
 chmod 600 "$data_dir/.ssh/authorized_keys"
 password="ssh-test-$run_suffix"
 wrong_password="wrong-ssh-test-$run_suffix"
-keyring_password="keyring-test-$run_suffix"
 password_file="$work_dir/askpass-password"
 wrong_password_file="$work_dir/askpass-wrong-password"
-keyring_password_file="$work_dir/keyring-password"
 askpass="$work_dir/askpass.sh"
 known_hosts="$work_dir/known_hosts"
 correct_marker_file="$work_dir/askpass-correct.marker"
@@ -496,8 +461,7 @@ wrong_ssh_stderr_file="$work_dir/ssh-wrong-password.stderr"
 disabled_ssh_stderr_file="$work_dir/ssh-password-disabled.stderr"
 printf '%s' "$password" > "$password_file"
 printf '%s' "$wrong_password" > "$wrong_password_file"
-printf '%s\n' "$keyring_password" > "$keyring_password_file"
-chmod 600 "$password_file" "$wrong_password_file" "$keyring_password_file"
+chmod 600 "$password_file" "$wrong_password_file"
 cat > "$askpass" <<'ASKPASS_EOF'
 #!/bin/sh
 set -eu
@@ -624,46 +588,9 @@ write_known_host() {
 check_password_not_logged() {
   logs=$(docker logs "$container_id" 2>&1 || true)
   case "$logs" in
-    *"$password"*|*"$wrong_password"*|*"$keyring_password"*) unset logs; printf '%s\n' 'SSH or keyring password material leaked to container logs.' >&2; return 1 ;;
+    *"$password"*|*"$wrong_password"*) unset logs; printf '%s\n' 'SSH password material leaked to container logs.' >&2; return 1 ;;
   esac
   unset logs
-}
-
-assert_runtime_gh_version() {
-  gh_version=$(docker exec "$container_id" gh --version 2>/dev/null | awk 'NR == 1 {print $3}') || {
-    printf '%s\n' 'GitHub CLI is unavailable after container startup.' >&2
-    return 1
-  }
-  if ! printf '%s\n' "$gh_version" | awk -F. 'NF >= 2 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {valid=($1 > 2 || ($1 == 2 && $2 >= 26))} END {exit !valid}'; then
-    printf '%s\n' 'Runtime GitHub CLI must be version 2.26.0 or newer.' >&2
-    return 1
-  fi
-}
-
-assert_keyring_disabled_by_absence() {
-  if docker logs "$container_id" 2>/dev/null | grep -Fqx 'keyring-secret-service-probe=passed'; then
-    printf '%s\n' 'Secret Service probe unexpectedly ran without a keyring unlock file.' >&2
-    return 1
-  fi
-}
-
-wait_for_keyring_probe() {
-  probe_attempt=0
-  while [ "$probe_attempt" -lt 60 ]; do
-    if docker logs "$container_id" 2>/dev/null | grep -Fqx 'keyring-secret-service-probe=passed'; then return 0; fi
-    if [ "$(docker inspect -f '{{.State.Running}}' "$container_id" 2>/dev/null || true)" != true ]; then
-      report_container_state
-      report_sanitized_logs
-      printf '%s\n' 'Keyring-enabled container stopped before the Secret Service probe.' >&2
-      return 1
-    fi
-    probe_attempt=$((probe_attempt + 1))
-    sleep 1
-  done
-  report_container_state
-  report_sanitized_logs
-  printf '%s\n' 'Timed out waiting for the Secret Service keyring probe.' >&2
-  return 1
 }
 
 report_container_state() {
@@ -759,8 +686,7 @@ docker_name=$(new_container_name) || { printf '%s\n' 'Could not create a unique 
 if ! create_and_start "$docker_name" password "$password_container_port" \
   -p "127.0.0.1:$host_port:$password_container_port" \
   -e DSH_PUBLIC_URL=https://localhost -e DSH_TRUSTED_HOST=localhost \
-  -e DSH_KEYRING_PROBE=yes \
-  -v "$data_dir:/data" -v "$home_dir:/workspace" -v "$keyring_password_file:/run/secrets/keyring-password:ro" "$DSH_TEST_IMAGE"; then
+  -v "$data_dir:/data" -v "$home_dir:/workspace" "$DSH_TEST_IMAGE"; then
   exit 1
 fi
 
@@ -790,7 +716,6 @@ done
 [ "$ready" -eq 1 ] || { report_sanitized_logs; printf '%s\n' 'Timed out waiting for key SSH login.' >&2; exit 1; }
 root_uid=$(docker exec "$container_id" id -u root 2>/dev/null) || { report_container_state; report_sanitized_logs; printf '%s\n' 'Root login identity is unavailable inside the container.' >&2; exit 1; }
 [ "$root_uid" = 0 ] || { printf '%s\n' 'SSH login account root does not have UID 0.' >&2; exit 1; }
-assert_runtime_gh_version || { report_container_state; report_sanitized_logs; exit 1; }
 
 run_ssh_auth_attempt "$password_file" "$correct_marker_file" "$correct_ssh_stderr_file" \
   -p "$host_port" -o PreferredAuthentications=password -o PubkeyAuthentication=no \
@@ -816,7 +741,6 @@ else
   printf 'Incorrect-password SSH rejection assertion failed (ssh exit=%s).\n' "$ssh_exit_code" >&2
   exit 1
 fi
-wait_for_keyring_probe || exit 1
 
 if [ "$(docker inspect -f '{{.State.Running}}' "$container_id" 2>/dev/null || true)" != true ]; then
   report_container_state
@@ -867,8 +791,6 @@ while [ "$attempt" -lt 120 ]; do
   attempt=$((attempt + 1)); sleep 2
 done
 [ "$attempt" -lt 120 ] || { report_sanitized_logs; printf '%s\n' 'Timed out waiting for password-disabled container.' >&2; exit 1; }
-assert_runtime_gh_version || { report_container_state; report_sanitized_logs; exit 1; }
-assert_keyring_disabled_by_absence || { report_container_state; report_sanitized_logs; exit 1; }
 run_ssh_auth_attempt "$password_file" "$disabled_marker_file" "$disabled_ssh_stderr_file" \
   -p "$host_port" -o PreferredAuthentications=password -o PubkeyAuthentication=no \
   -o NumberOfPasswordPrompts=1 -o ConnectTimeout=5 -o StrictHostKeyChecking=yes \

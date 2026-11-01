@@ -10,10 +10,6 @@ const bootstrap = readFileSync(resolve(root, 'bootstrap.sh'), 'utf8')
 const runner = readFileSync(resolve(root, 'dsh-web-runner.mjs'), 'utf8')
 const dockerfile = readFileSync(resolve(root, 'Dockerfile'), 'utf8')
 const integration = readFileSync(resolve(root, 'tests/docker-integration.sh'), 'utf8')
-const keyringSecretCheck = readFileSync(resolve(root, 'keyring-file-check.mjs'), 'utf8')
-const keyringSession = readFileSync(resolve(root, 'dsh-keyring-session.sh'), 'utf8')
-const keyringChild = readFileSync(resolve(root, 'dsh-keyring-child.sh'), 'utf8')
-const unraidTemplate = readFileSync(resolve(root, 'unraid/dsh.xml'), 'utf8')
 
 function currentSessionDirectory() {
   const id = process.env.DSH_SESSION_ID ?? ''
@@ -49,16 +45,14 @@ function rejectsMutation(predicate, healthy, broken, label) {
 test('OpenSSH is installed at runtime, not baked into the image', () => {
   const runtimeInstall = source => {
     const check = source.indexOf('if ! command -v ssh')
-    const needFlag = source.indexOf('need_openssh_packages=yes', check)
-    const update = source.indexOf('apt-get update', needFlag)
-    const packageList = source.indexOf('openssh-client openssh-server passwd', update)
-    const install = source.indexOf('apt-get install -y --no-install-recommends $runtime_packages', packageList)
+    const update = source.indexOf('apt-get update', check)
+    const install = source.indexOf('apt-get install -y --no-install-recommends openssh-client openssh-server passwd', update)
     const hostKeyGeneration = source.indexOf('ssh-keygen -A', install)
-    return check >= 0 && needFlag > check && update > needFlag && packageList > update && install > packageList && hostKeyGeneration > install
+    return check >= 0 && update > check && install > update && hostKeyGeneration > install
   }
   assert.equal(runtimeInstall(bootstrap), true, 'missing SSH tools are installed before generating runtime host keys')
   rejectsMutation(runtimeInstall,
-    'if ! command -v ssh; then need_openssh_packages=yes; fi\napt-get update\nruntime_packages="$runtime_packages openssh-client openssh-server passwd"\napt-get install -y --no-install-recommends $runtime_packages\nssh-keygen -A',
+    'if ! command -v ssh; then apt-get update; apt-get install -y --no-install-recommends openssh-client openssh-server passwd; fi\nssh-keygen -A',
     'RUN apt-get install openssh-client openssh-server',
     'runtime-only SSH package install')
   assert.doesNotMatch(dockerfile, /openssh-client|openssh-server|ssh_host_/, 'image build must not install SSH or bake host keys')
@@ -196,43 +190,6 @@ test('E2E expects runtime SSH installation and keeps login fixed to root', () =>
     'DSH_BIND_HOST=0.0.0.0', 'avoid wildcard DSH listener')
   assert.doesNotMatch(integration, /SSH_USERNAME|password_username|useradd/)
   assert.doesNotMatch(integration, /-e SSH_PASSWORD="\$password"/)
-})
-
-test('optional keyring is secret-file gated and GH credentials prefer the container keyring', () => {
-  assert.ok(bootstrap.includes('keyring_secret_file=/run/secrets/keyring-password'))
-  assert.ok(bootstrap.includes('elif [ -d "$keyring_secret_file" ]; then'))
-  assert.ok(bootstrap.includes('node /usr/local/bin/keyring-file-check.mjs "$keyring_secret_file"'))
-  assert.ok(bootstrap.includes('export DSH_KEYRING_ENABLED="$dsh_keyring_enabled"'))
-  assert.ok(bootstrap.includes('gh_cli_keyring_sha256=6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b'))
-  assert.ok(bootstrap.includes('https://cli.github.com/packages stable main'))
-  assert.ok(bootstrap.includes('Number(match[2]) >= 26'))
-  assert.ok(keyringSecretCheck.includes('stat.uid !== expectedUid'))
-  assert.ok(keyringSecretCheck.includes("fields[5].split(',').includes('ro')"))
-  for (const tokenName of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']) {
-    assert.ok(bootstrap.includes(tokenName))
-    assert.ok(runner.includes(`delete childEnv.${tokenName}`))
-  }
-  assert.ok(dockerfile.includes('COPY keyring-file-check.mjs'))
-  assert.ok(dockerfile.includes('COPY dsh-keyring-session.sh'))
-  assert.ok(dockerfile.includes('COPY dsh-keyring-child.sh'))
-  assert.ok(keyringSession.includes('dbus-run-session --'))
-  assert.ok(runner.includes("const dshCommand = keyringEnabled ? '/usr/local/bin/dsh-keyring-session.sh' : 'dsh'"))
-  assert.ok(runner.includes('const dshArgs = keyringEnabled ?'))
-  assert.ok(keyringChild.includes('gnome-keyring-daemon --foreground --components=secrets --unlock'))
-  assert.doesNotMatch(keyringChild, /awk[^\n]*\|[^\n]*gnome-keyring-daemon/)
-  assert.ok(keyringChild.includes('wait_for_process_exit "$process_pid"'))
-  assert.ok(keyringChild.includes('stop_managed_process "$keyring_pid"'))
-  assert.ok(keyringChild.includes("trap 'handle_signal 143' TERM"))
-  assert.match(keyringChild, /XDG_DATA_HOME=\$\{XDG_DATA_HOME:-\/data\/\.local\/share\}/)
-  assert.ok(keyringChild.includes('secret-tool store'))
-  assert.ok(keyringChild.includes('secret-tool lookup'))
-  assert.ok(keyringChild.includes('secret-tool clear'))
-  assert.ok(keyringChild.includes('keyring-secret-service-probe=passed'))
-  assert.ok(keyringChild.includes('persist-store'))
-  assert.ok(keyringChild.includes('persist-verify'))
-  assert.ok(unraidTemplate.includes('Target="/run/secrets/keyring-password"'))
-  assert.ok(unraidTemplate.includes('Default="/mnt/user/appdata/dsh-sec/keyring-password"'))
-  assert.match(unraidTemplate, /Target="\/run\/secrets\/keyring-password"[^\n]*Mode="ro"/)
 })
 
 test('registration cancellation, spawn races, signal/timeout cleanup, and sibling stop are wired', () => {

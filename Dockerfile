@@ -15,12 +15,9 @@ RUN apt-get update \
 
 COPY bootstrap.sh /usr/local/bin/dsh-bootstrap
 COPY dsh-web-runner.mjs /usr/local/bin/dsh-web-runner.mjs
-COPY keyring-file-check.mjs /usr/local/bin/keyring-file-check.mjs
-COPY dsh-keyring-session.sh /usr/local/bin/dsh-keyring-session.sh
-COPY dsh-keyring-child.sh /usr/local/bin/dsh-keyring-child.sh
 COPY dsh-home.patch.yml /opt/dsh-home.patch.yml
-RUN chmod 0755 /usr/local/bin/dsh-bootstrap /usr/local/bin/dsh-keyring-session.sh /usr/local/bin/dsh-keyring-child.sh \
-    && chmod 0644 /usr/local/bin/dsh-web-runner.mjs /usr/local/bin/keyring-file-check.mjs /opt/dsh-home.patch.yml \
+RUN chmod 0755 /usr/local/bin/dsh-bootstrap \
+    && chmod 0644 /usr/local/bin/dsh-web-runner.mjs /opt/dsh-home.patch.yml \
     && mkdir -p /workspace
 
 WORKDIR /workspace

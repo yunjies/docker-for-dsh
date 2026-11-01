@@ -4,7 +4,6 @@ import { createInterface } from 'node:readline'
 const args = process.argv.slice(2)
 const registerUrl = process.env.DSH_TOKEN_REGISTER_URL ?? ''
 const passwordAuth = process.env.SSH_PASSWORD_AUTH === 'yes'
-const keyringEnabled = process.env.DSH_KEYRING_ENABLED === 'yes'
 const sshPortText = process.env.DSH_SSH_PORT ?? '22'
 if (!/^[1-9][0-9]{0,4}$/.test(sshPortText) || Number(sshPortText) > 65535) {
   throw new Error('Invalid SSH_PORT passed to the web runner.')
@@ -16,11 +15,6 @@ delete childEnv.SSH_PASSWORD_AUTH
 delete childEnv.SSH_USERNAME
 delete childEnv.SSH_PORT
 delete childEnv.DSH_SSH_PORT
-delete childEnv.DSH_KEYRING_ENABLED
-delete childEnv.GH_TOKEN
-delete childEnv.GITHUB_TOKEN
-delete childEnv.GH_ENTERPRISE_TOKEN
-delete childEnv.GITHUB_ENTERPRISE_TOKEN
 
 const sshdOptions = [
   '-o', 'AuthorizedKeysFile=/run/sshd/authorized_keys',
@@ -296,9 +290,7 @@ async function run() {
     if (!sshdStarted || stopping || sshd.closed) {
       if (!stopping) requestShutdown(1)
     } else {
-      const dshCommand = keyringEnabled ? '/usr/local/bin/dsh-keyring-session.sh' : 'dsh'
-      const dshArgs = keyringEnabled ? ['/run/secrets/keyring-password', 'dsh', ...args] : args
-      const dsh = spawnManaged('DSH Web', dshCommand, dshArgs, ['inherit', 'pipe', 'pipe'])
+      const dsh = spawnManaged('DSH Web', 'dsh', args, ['inherit', 'pipe', 'pipe'])
       if (dsh.child) {
         forwardLines(dsh.child.stdout, process.stdout)
         forwardLines(dsh.child.stderr, process.stderr)

@@ -14,8 +14,7 @@ bootstrap_exit_trap() {
 }
 trap 'bootstrap_exit_trap' 0
 
-unset dsh_ssh_password_value dsh_ssh_port_value dsh_keyring_enabled
-unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
+unset dsh_ssh_password_value dsh_ssh_port_value
 dsh_ssh_password_value=${SSH_PASSWORD:-}
 dsh_ssh_port_value=${SSH_PORT:-22}
 # SSH access is fixed to root; ignore any legacy username override.
@@ -32,125 +31,28 @@ if [ "${#dsh_ssh_port_value}" -gt 5 ] || [ "$dsh_ssh_port_value" -gt 65535 ]; th
   exit 2
 fi
 
-dsh_keyring_enabled=no
-keyring_secret_file=/run/secrets/keyring-password
-startup_stage=keyring_secret_file_validation
-if [ -L "$keyring_secret_file" ]; then
-  printf '%s\n' 'Keyring unlock file must be root-owned, read-only, mode 0400 or 0600, and contain one non-empty line.' >&2
-  exit 2
-elif [ -d "$keyring_secret_file" ]; then
-  dsh_keyring_enabled=no
-elif [ -f "$keyring_secret_file" ]; then
-  if ! node /usr/local/bin/keyring-file-check.mjs "$keyring_secret_file"; then
-    printf '%s\n' 'Keyring unlock file must be root-owned, read-only, mode 0400 or 0600, and contain one non-empty line.' >&2
-    exit 2
-  fi
-  dsh_keyring_enabled=yes
-elif [ -e "$keyring_secret_file" ]; then
-  printf '%s\n' 'Keyring unlock file must be root-owned, read-only, mode 0400 or 0600, and contain one non-empty line.' >&2
-  exit 2
-fi
-
 startup_stage=data_volume
 if [ ! -r /data ] || [ ! -w /data ]; then
   printf '%s\n' '/data must be a readable and writable volume.' >&2
   exit 1
 fi
-gh_cli_keyring_file=/etc/apt/keyrings/githubcli-archive-keyring.gpg
-gh_cli_source_file=/etc/apt/sources.list.d/github-cli.list
-gh_cli_keyring_sha256=6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b
-need_openssh_packages=no
+startup_stage=openssh_runtime_install
 if ! command -v ssh >/dev/null 2>&1 || [ ! -x /usr/sbin/sshd ] || ! command -v ssh-keygen >/dev/null 2>&1 || ! command -v chpasswd >/dev/null 2>&1; then
-  need_openssh_packages=yes
-fi
-need_gh_package=yes
-gh_cli_version=
-if command -v gh >/dev/null 2>&1; then
-  gh_cli_version=$(gh --version 2>/dev/null | awk 'NR == 1 { print $3 }' || true)
-  if [ -n "$gh_cli_version" ] && node - "$gh_cli_version" <<'NODE'
-const match = process.argv[2].match(/^(\d+)\.(\d+)\.(\d+)/)
-if (match && (Number(match[1]) > 2 || Number(match[1]) === 2 && Number(match[2]) >= 26)) process.exit(0)
-process.exit(1)
-NODE
-  then
-    need_gh_package=no
-  fi
-fi
-need_keyring_packages=no
-if [ "$dsh_keyring_enabled" = yes ]; then
-  dbus_user_session_package_status=$(dpkg-query -W -f='${Status}' dbus-user-session 2>/dev/null || true)
-  if [ "$dbus_user_session_package_status" != 'install ok installed' ] || ! command -v dbus-run-session >/dev/null 2>&1 || [ ! -x /usr/bin/gnome-keyring-daemon ] || ! command -v secret-tool >/dev/null 2>&1; then
-    need_keyring_packages=yes
-  fi
-fi
-if [ "$need_openssh_packages" = yes ] || [ "$need_gh_package" = yes ] || [ "$need_keyring_packages" = yes ]; then
   if ! command -v apt-get >/dev/null 2>&1; then
-    printf '%s\n' 'Runtime package installation requires apt-get.' >&2
+    printf '%s\n' 'OpenSSH startup installation requires apt-get.' >&2
     exit 1
   fi
-  startup_stage=runtime_package_repository_update
+  startup_stage=openssh_runtime_repository_update
   if ! apt-get update; then
-    printf '%s\n' 'Could not update package metadata for runtime package installation.' >&2
+    printf '%s\n' 'Could not update package metadata for OpenSSH startup installation.' >&2
     exit 1
   fi
-  if [ "$need_gh_package" = yes ]; then
-    startup_stage=gh_cli_prerequisites
-    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl; then
-      printf '%s\n' 'Could not install GitHub CLI repository prerequisites.' >&2
-      exit 1
-    fi
-    install -d -m 0755 /etc/apt/keyrings /etc/apt/sources.list.d
-    gh_cli_keyring_temp=$(mktemp /run/githubcli-keyring.XXXXXX) || { printf '%s\n' 'Could not prepare GitHub CLI signing keyring.' >&2; exit 1; }
-    if ! curl --fail --silent --show-error --location --max-time 60 --output "$gh_cli_keyring_temp" https://cli.github.com/packages/githubcli-archive-keyring.gpg; then
-      rm -f -- "$gh_cli_keyring_temp"
-      printf '%s\n' 'Could not download GitHub CLI signing keyring.' >&2
-      exit 1
-    fi
-    gh_cli_keyring_actual=$(sha256sum "$gh_cli_keyring_temp" | awk '{ print $1 }')
-    if [ "$gh_cli_keyring_actual" != "$gh_cli_keyring_sha256" ]; then
-      rm -f -- "$gh_cli_keyring_temp"
-      printf '%s\n' 'GitHub CLI signing keyring checksum did not match the pinned official checksum.' >&2
-      exit 1
-    fi
-    if ! install -o root -g root -m 0644 "$gh_cli_keyring_temp" "$gh_cli_keyring_file"; then
-      rm -f -- "$gh_cli_keyring_temp"
-      printf '%s\n' 'Could not install GitHub CLI signing keyring.' >&2
-      exit 1
-    fi
-    rm -f -- "$gh_cli_keyring_temp"
-    gh_cli_arch=$(dpkg --print-architecture)
-    if ! printf 'deb [arch=%s signed-by=%s] https://cli.github.com/packages stable main\n' "$gh_cli_arch" "$gh_cli_keyring_file" > "$gh_cli_source_file"; then
-      printf '%s\n' 'Could not configure the official GitHub CLI package repository.' >&2
-      exit 1
-    fi
-    chmod 0644 "$gh_cli_source_file"
-    startup_stage=gh_cli_repository_update
-    if ! apt-get update; then
-      printf '%s\n' 'Could not update package metadata for the official GitHub CLI repository.' >&2
-      exit 1
-    fi
-  fi
-  runtime_packages=
-  if [ "$need_openssh_packages" = yes ]; then runtime_packages="$runtime_packages openssh-client openssh-server passwd"; fi
-  if [ "$need_gh_package" = yes ]; then runtime_packages="$runtime_packages gh"; fi
-  if [ "$need_keyring_packages" = yes ]; then runtime_packages="$runtime_packages dbus-daemon dbus-user-session gnome-keyring libsecret-tools"; fi
-  startup_stage=runtime_package_install
-  if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $runtime_packages; then
-    printf '%s\n' 'Could not install required runtime packages.' >&2
+  startup_stage=openssh_runtime_package_install
+  if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssh-client openssh-server passwd; then
+    printf '%s\n' 'Could not install OpenSSH startup packages.' >&2
     exit 1
   fi
   rm -rf /var/lib/apt/lists/*
-fi
-startup_stage=gh_cli_version_check
-gh_cli_version=$(gh --version 2>/dev/null | awk 'NR == 1 { print $3 }' || true)
-if ! node - "$gh_cli_version" <<'NODE'
-const match = process.argv[2].match(/^(\d+)\.(\d+)\.(\d+)/)
-if (match && (Number(match[1]) > 2 || Number(match[1]) === 2 && Number(match[2]) >= 26)) process.exit(0)
-process.exit(1)
-NODE
-then
-  printf '%s\n' 'GitHub CLI version 2.26.0 or newer is required.' >&2
-  exit 1
 fi
 startup_stage=sshd_runtime_dir
 install -d -m 0755 /run/sshd
@@ -276,6 +178,5 @@ trusted_host="${DSH_TRUSTED_HOST:?set DSH_TRUSTED_HOST}"
 export DSH_TOKEN_REGISTER_URL="${DSH_TOKEN_REGISTER_URL:-}"
 export SSH_PASSWORD_AUTH="$ssh_password_auth"
 export DSH_SSH_PORT="$dsh_ssh_port_value"
-export DSH_KEYRING_ENABLED="$dsh_keyring_enabled"
 startup_stage=runner_handoff
 exec node /usr/local/bin/dsh-web-runner.mjs --profile web --no-open --host "$bind_host" --port 3080 --public-url "$public_url" --trusted-host "$trusted_host"

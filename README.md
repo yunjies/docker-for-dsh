@@ -32,26 +32,6 @@ At container startup, bootstrap checks for `ssh`, `sshd`, `ssh-keygen`, and `chp
 
 Set `SSH_PASSWORD` to a non-empty value to set the root password and enable SSH password authentication. If it is unset or empty, password authentication is disabled; public-key authentication remains available in either mode. Bootstrap copies the exported value into an unexported shell variable, unsets `SSH_PASSWORD` before launching `chpasswd`, and sends the value to `chpasswd` only through stdin; it rejects line breaks and does not intentionally log the password or pass it in child-process environments. Unsetting it in bootstrap does not remove the original value from Docker's container configuration, which Docker administrators can inspect. Restrict Docker management access and protect the environment value.
 
-### Optional Secret Service and GitHub CLI
-
-The Unraid template optionally maps `/mnt/user/appdata/dsh-sec/keyring-password` read-only to `/run/secrets/keyring-password`. Create the host file as root-owned mode `0400` or `0600` with a single-line keyring password; one terminal newline is ignored. If the file is absent or Docker created a directory for a missing host path, bootstrap leaves Keyring disabled and starts DSH/SSH normally; a symlink or invalid regular file causes a fixed startup error.
-
-For Docker Compose, add this bind mount to the service only when enabling Keyring. Create the host file before running Compose; `create_host_path: false` makes a missing file an error instead of silently creating a directory. Omit the mount to keep Keyring disabled. Do not pass the password as an environment variable.
-
-```yaml
-services:
-  dsh:
-    volumes:
-      - type: bind
-        source: /mnt/user/appdata/dsh-sec/keyring-password
-        target: /run/secrets/keyring-password
-        read_only: true
-        bind:
-          create_host_path: false
-```
-
-When enabled, the GH CLI uses a GNOME Keyring Secret Service session scoped to DSH; sshd does not depend on D-Bus. The keyring database persists under `/data/.local/share/keyrings`, and the unlock value is streamed from the read-only file to the daemon through stdin. GH CLI is installed from GitHub's signed APT repository at version `2.26.0` or newer; `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, and `GITHUB_ENTERPRISE_TOKEN` are removed from DSH's child environment so they do not override keyring lookup. Stock GH CLI may fall back to `/data/.config/gh/hosts.yml` if Secret Service is unavailable; Docker administrators can inspect that file, the mounted unlock file, and the keyring database, so this feature is not a confidentiality boundary against container-root or Docker administrators.
-
 The runner validates the sshd configuration, starts sshd and DSH as separately supervised process groups, and stops the peer when either service exits. It forwards container termination signals, escalates remaining process groups to SIGKILL after a grace period, and does not restart a failed service; configure any whole-container restart policy in the deployment layer.
 
 Run without privileged mode, Docker socket mounts, or host-root mounts. Container-root is not host-root. `DSH_TOKEN_REGISTER_URL` is optional and blank by default. When configured, the wrapper can post a valid launch token to that endpoint; token query parameters are removed from the emitted launch URL before logging, and the registration URL is not passed into the DSH process.
