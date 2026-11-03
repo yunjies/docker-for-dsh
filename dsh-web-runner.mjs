@@ -1,8 +1,13 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
+import { createProxyRegistrationPublisher } from './proxy-token-registration.mjs'
 
 const args = process.argv.slice(2)
 const registerUrl = process.env.DSH_TOKEN_REGISTER_URL ?? ''
+const proxyRegistrationPublisher = createProxyRegistrationPublisher(process.env)
+if (registerUrl && proxyRegistrationPublisher) {
+  throw new Error('Configure either DSH_TOKEN_REGISTER_URL or DSH_PROXY_REGISTRATION_URL, not both.')
+}
 const passwordAuth = process.env.SSH_PASSWORD_AUTH === 'yes'
 const sshPortText = process.env.DSH_SSH_PORT ?? '22'
 if (!/^[1-9][0-9]{0,4}$/.test(sshPortText) || Number(sshPortText) > 65535) {
@@ -10,11 +15,22 @@ if (!/^[1-9][0-9]{0,4}$/.test(sshPortText) || Number(sshPortText) > 65535) {
 }
 const childEnv = { ...process.env }
 delete childEnv.DSH_TOKEN_REGISTER_URL
+delete childEnv.DSH_PROXY_REGISTRATION_URL
+delete childEnv.DSH_PROXY_REGISTRATION_SECRET_FILE
+delete childEnv.DSH_PROXY_UPSTREAM_IP
+delete childEnv.DSH_WEB_HOST_PORT
 delete childEnv.SSH_PASSWORD
 delete childEnv.SSH_PASSWORD_AUTH
 delete childEnv.SSH_USERNAME
 delete childEnv.SSH_PORT
 delete childEnv.DSH_SSH_PORT
+delete childEnv.DSH_RUN_UID
+
+const dshRunUid = Number.parseInt(process.env.DSH_RUN_UID ?? '', 10)
+if (process.env.DSH_RUN_UID !== undefined && (!/^[0-9]+$/.test(process.env.DSH_RUN_UID) || dshRunUid > 4294967294)) {
+  throw new Error('Invalid DSH_RUN_UID passed to the web runner.')
+}
+const dshRunOptions = dshRunUid > 0 ? { uid: dshRunUid } : {}
 
 const sshdOptions = [
   '-o', 'AuthorizedKeysFile=/run/sshd/authorized_keys',
@@ -109,7 +125,7 @@ function requestShutdown(code, signal = 'SIGTERM') {
   return shutdownPromise
 }
 
-function spawnManaged(name, command, childArgs, stdio) {
+function spawnManaged(name, command, childArgs, stdio, spawnOptions = {}) {
   let resolveStarted
   let resolveClosed
   let startSettled = false
@@ -135,6 +151,7 @@ function spawnManaged(name, command, childArgs, stdio) {
       env: childEnv,
       stdio,
       detached: true,
+      ...spawnOptions,
     })
   } catch (error) {
     state.closed = true
@@ -206,7 +223,7 @@ function waitForRegistrationRetry(delayMs) {
 }
 
 function registerToken(token) {
-  if (!registerUrl || stopping) return Promise.resolve()
+  if ((!registerUrl && !proxyRegistrationPublisher) || stopping) return Promise.resolve()
   if (!/^[A-Za-z0-9_-]{32,128}$/.test(token)) {
     writeDiagnostic('DSH token registration skipped because token format was invalid.')
     return Promise.resolve()
@@ -216,19 +233,23 @@ function registerToken(token) {
   return (async () => {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       try {
-        const response = await fetch(registerUrl, {
-          method: 'POST',
-          headers: { 'content-type': 'text/plain' },
-          body: token,
-          signal: AbortSignal.any([
-            registrationAbortController.signal,
-            AbortSignal.timeout(8000),
-          ]),
-        })
-        if (response.ok) {
-          writeDiagnostic('DSH launch token registered with the proxy.')
-          return
+        const signal = AbortSignal.any([
+          registrationAbortController.signal,
+          AbortSignal.timeout(8000),
+        ])
+        if (proxyRegistrationPublisher) {
+          await proxyRegistrationPublisher(token, signal)
+        } else {
+          const response = await fetch(registerUrl, {
+            method: 'POST',
+            headers: { 'content-type': 'text/plain' },
+            body: token,
+            signal,
+          })
+          if (!response.ok) throw new Error('Proxy registration endpoint rejected the token.')
         }
+        writeDiagnostic('DSH launch token registered with the proxy.')
+        return
       } catch {
         if (registrationAbortController.signal.aborted) return
       }
@@ -281,7 +302,10 @@ async function run() {
   }
 
   if (!stopping) {
-    const sshd = spawnManaged('sshd', '/usr/sbin/sshd', ['-D', '-e', ...sshdOptions], ['ignore', 'pipe', 'pipe'])
+    // sshd only accepts root: it reads root-owned system configuration and host
+    // keys, and refuses to start as the DSH run user. Pin it to uid 0 so DSH can
+    // drop to another account while the SSH service keeps working.
+    const sshd = spawnManaged('sshd', '/usr/sbin/sshd', ['-D', '-e', ...sshdOptions], ['ignore', 'pipe', 'pipe'], dshRunUid === 0 ? {} : { uid: 0, gid: 0 })
     if (sshd.child) {
       forwardLines(sshd.child.stdout, process.stderr)
       forwardLines(sshd.child.stderr, process.stderr)
@@ -290,7 +314,7 @@ async function run() {
     if (!sshdStarted || stopping || sshd.closed) {
       if (!stopping) requestShutdown(1)
     } else {
-      const dsh = spawnManaged('DSH Web', 'dsh', args, ['inherit', 'pipe', 'pipe'])
+      const dsh = spawnManaged('DSH Web', 'dsh', args, ['inherit', 'pipe', 'pipe'], dshRunOptions)
       if (dsh.child) {
         forwardLines(dsh.child.stdout, process.stdout)
         forwardLines(dsh.child.stderr, process.stderr)

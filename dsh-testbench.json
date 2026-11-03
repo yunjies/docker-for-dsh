@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "setup": null,
+  "prerequisites": {
+    "executables": ["sh", "node", "python3"],
+    "files": [
+      "tests/run-static.mjs",
+      "tests/run-docker-integration.py",
+      "tests/run-compose-config.py",
+      "tests/fixtures/compose.env",
+      "tests/fixtures/proxy-registry-bearer.fixture",
+      "proxy-registry/server.py",
+      "proxy-registry/apply_registration.py",
+      "proxy-registry/configure_nginx.py"
+    ]
+  },
+  "suites": [
+    {
+      "id": "static",
+      "label": "Syntax, runner contracts, and token registration tests",
+      "argv": ["node", "tests/run-static.mjs"],
+      "layers": ["static"]
+    },
+    {
+      "id": "proxy-registry-unit",
+      "label": "Reverse proxy registration service unit tests",
+      "argv": ["python3", "-B", "-m", "unittest", "discover", "-s", "proxy-registry/tests", "-p", "test_*.py"],
+      "layers": ["static"]
+    },
+    {
+      "id": "compose-config",
+      "label": "Docker Compose configuration validation",
+      "argv": ["python3", "tests/run-compose-config.py"],
+      "layers": ["static"]
+    },
+    {
+      "id": "docker-integration",
+      "label": "Docker image and SSH runtime integration",
+      "argv": ["python3", "tests/run-docker-integration.py"],
+      "layers": ["live"]
+    }
+  ]
+}

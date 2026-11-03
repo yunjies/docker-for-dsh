@@ -1,0 +1,44 @@
+services:
+  dsh:
+    container_name: dsh
+    image: docker-for-dsh:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      CI: ${CI:-true}
+      DSH_HOME: ${DSH_HOME:-/data/.dsh}
+      DSH_RUN_USER: ${DSH_RUN_USER:-root}
+      HOME: ${DSH_HOME:-/data/.dsh}
+      DSH_VERSION: ${DSH_VERSION:-latest}
+      DSH_PUBLIC_URL: ${DSH_PUBLIC_URL:?Set DSH_PUBLIC_URL in .env}
+      DSH_TRUSTED_HOST: ${DSH_TRUSTED_HOST:?Set DSH_TRUSTED_HOST in .env}
+      DSH_BIND_HOST: ${DSH_BIND_HOST:-}
+      DSH_SSH_PORT: ${DSH_SSH_PORT:-22}
+      DSH_TOKEN_REGISTER_URL: ${DSH_TOKEN_REGISTER_URL:-}
+      DSH_PROXY_REGISTRATION_URL: ${DSH_PROXY_REGISTRATION_URL:?Set DSH_PROXY_REGISTRATION_URL in .env}
+      DSH_PROXY_REGISTRATION_SECRET_FILE: /run/secrets/proxy_registry_secret
+      DSH_PROXY_UPSTREAM_IP: ${DSH_PROXY_UPSTREAM_IP:?Set DSH_PROXY_UPSTREAM_IP in .env}
+      DSH_WEB_HOST_PORT: ${DSH_WEB_HOST_PORT:?Set DSH_WEB_HOST_PORT in .env}
+    extra_hosts:
+      - "${DSH_PROXY_API_HOST:?Set DSH_PROXY_API_HOST in .env}:${DSH_PROXY_API_IP:?Set DSH_PROXY_API_IP in .env}"
+    ports:
+      - "${DSH_WEB_BIND_IP:-0.0.0.0}:${DSH_WEB_HOST_PORT}:3080/tcp"
+    volumes:
+      - "${DSH_DATA_HOST_PATH:-./data}:/data:rw"
+      - "${DSH_WORKSPACE_HOST_PATH:-./workspace}:/workspace:rw"
+      - type: bind
+        source: ${DSH_PROXY_REGISTRATION_SECRET_FILE:?Set DSH_PROXY_REGISTRATION_SECRET_FILE in .env}
+        target: /run/secrets/proxy_registry_secret
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      dsh-private:
+        ipv4_address: ${DSH_CONTAINER_IP:?Set DSH_CONTAINER_IP in .env}
+
+networks:
+  dsh-private:
+    external: true
+    name: ${DSH_NETWORK_NAME:-dsh-private}

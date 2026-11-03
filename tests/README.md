@@ -1,16 +1,8 @@
-# Static checks
+# Test suites
 
-From the repository root, run only the requested syntax and well-formedness checks:
+The canonical test manifest is [`../dsh-testbench.json`](../dsh-testbench.json). In DSH, use `dsh_testbench` action `inspect`, then run every listed suite (`static`, `proxy-registry-unit`, `compose-config`, and `docker-integration`) by its exact id. The wrappers in `tests/` are the project-owned commands invoked by the manifest; do not substitute ad hoc commands for these suites.
 
-```sh
-sh -n bootstrap.sh
-sh -n tests/docker-integration.sh
-node --check dsh-web-runner.mjs
-DSH_SESSION_ID="${DSH_SESSION_ID:?set a session-<lowercase UUID>}" node --test tests/ssh-contract.test.mjs
-python3 -c 'import xml.etree.ElementTree as ET; ET.parse("unraid/dsh.xml")'
-```
-
-The syntax checks cover shell parsing, JavaScript syntax, and XML parsing. `tests/ssh-contract.test.mjs` asserts the SSH/bootstrap and runner source contracts and includes deliberately defective fixtures that each contract predicate must reject. It does not execute a container, a real `sshd`, or actual child-process races; it is a static regression test, not runtime evidence for SSH authentication, host-key generation, external connectivity, or signal-driven cleanup.
+The `static` suite checks shell/JavaScript/Python/XML syntax, runner source contracts, and the token publisher against a fake fetch function. Every suite except `docker-integration` runs on the host, so the host must provide `sh`, `node`, and `python3`; `static` itself invokes `python3` twice and `proxy-registry-unit` and `compose-config` are `python3` programs. The image installs `python3` in its build layer, so these suites run unchanged inside the container. `proxy-registry-unit` exercises request authentication, source-IP matching, schema validation, upstream rendering, and failure handling without network access. `compose-config` runs `docker compose config` against a non-secret fixture. The `docker-integration` live suite builds and runs the container to verify the existing SSH runtime behavior; it requires Docker Engine and the tools described below. Neither live suite deploys or updates the real proxy service.
 
 ## SSH authentication assertion fixtures
 

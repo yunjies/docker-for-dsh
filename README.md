@@ -12,7 +12,24 @@ docker build -t docker-for-dsh:local .
 
 GitHub Actions publishes `ghcr.io/yunjies/docker-for-dsh:latest` and the source commit SHA tag for pushes to `main` or a manual dispatch. The workflow uses the repository-provided `GITHUB_TOKEN` with only contents-read and packages-write permissions. Set the GHCR package visibility to public for unauthenticated Unraid pulls.
 
-For Unraid, load the template from <https://raw.githubusercontent.com/yunjies/docker-for-dsh/main/unraid/dsh.xml> and select the existing `dsh-private` Docker network. The template defaults to container name `dsh-sec`, host port `13081`, and appdata paths under `/mnt/user/appdata/dsh-sec`; choose a fixed private-network IP only when your token registrar or other consumers require it. If the registrar uses an IP allowlist, set `MyIP` and `DSH_BIND_HOST` to the same permitted address. Set `DSH_PUBLIC_URL` and `DSH_TRUSTED_HOST` to values that match the reverse-proxy route. Set `DSH_TOKEN_REGISTER_URL` only when a trusted launch-token registrar is configured. `SSH_PORT` selects the port that sshd listens on inside the container (default `22`, valid range `1–65535`). Docker must separately map an unused host TCP port to that container port; for `SSH_PORT=22`, an example is `2222:22`. The image's `EXPOSE 22` is metadata for the default only and does not publish a host port.
+## Docker Compose
+
+Copy `.env.example` to `.env`, then set `DSH_PUBLIC_URL`, `DSH_TRUSTED_HOST`, `DSH_DATA_HOST_PATH`, `DSH_WORKSPACE_HOST_PATH`, `DSH_PROXY_REGISTRATION_URL`, `DSH_PROXY_API_HOST`, `DSH_PROXY_API_IP`, `DSH_PROXY_REGISTRATION_SECRET_FILE`, and `DSH_PROXY_UPSTREAM_IP`. The Compose service sends each newly observed DSH launch token to the HTTPS registrar as JSON `{ "ip", "web_port", "token" }` with a Bearer credential read from the mounted secret file. `DSH_PROXY_API_HOST` is mapped to `DSH_PROXY_API_IP` in the container so TLS hostname verification remains enabled; the registrar independently checks the caller's source IP. The proxy service validates and records the registration, then updates the Nginx upstream and token map. The `DSH_WEB_HOST_PORT` published by Compose is the registered web port. See [`proxy-registry/README.md`](proxy-registry/README.md) for deploying the service on the reverse-proxy host. Keep `.env` and the bearer secret private; `.env` is ignored by Git and excluded from the image build context.
+
+This removes the need for Docker to SSH into the proxy. The registrar credential is limited to registration, but DSH runs as container-root and can read the mounted secret; protect Docker access and do not reuse the credential for other services. The registrar is exposed through the existing HTTPS Nginx listener, requires both an authorized source IP and a valid Bearer credential, and does not log request bodies or tokens.
+
+Validate the staged settings with `docker compose config`. To convert the existing manually created `dsh` container, keep its `/data` and `/workspace` bind paths in `.env`, then from the directory containing `docker-compose.yml`, stop and rename the old container before Compose takes the `dsh` name:
+
+```sh
+docker stop dsh
+docker rename dsh dsh-pre-token-api
+docker update --restart=no dsh-pre-token-api
+docker compose up -d --build
+```
+
+Compose manages the container named `dsh`, joins the existing `dsh-private` network, and publishes only the Web port; inbound container SSH is not published by default. Set `DSH_WEB_BIND_IP` and `DSH_WEB_HOST_PORT` to the host bind address and port the reverse proxy is configured to reach. Keep the old container stopped but available until the new launch token is registered and the external route works. To roll back, run `docker compose down`, restore the old restart policy, rename it to `dsh`, and start it. Do not remove the old container or its bind-mounted data until verification is complete.
+
+For Unraid, load the template from <https://raw.githubusercontent.com/yunjies/docker-for-dsh/main/unraid/dsh.xml> and select the existing `dsh-private` Docker network. The template defaults to container name `dsh-sec`, host web port `13081`, and appdata paths under `/mnt/user/appdata/dsh-sec`; choose a fixed private-network IP only when other consumers require it. For the HTTPS JSON registrar, set `DSH_PROXY_REGISTRATION_URL`, `DSH_PROXY_UPSTREAM_IP`, and `DSH_WEB_HOST_PORT` (the latter must match the Web UI host port mapping), then mount a protected host secret directory at `/run/secrets` and set the Bearer secret file path. Keep the legacy `DSH_TOKEN_REGISTER_URL` blank when using the JSON API; the runner rejects both modes being configured together. The registrar independently restricts source IP and allowed web port. Set `DSH_PUBLIC_URL` and `DSH_TRUSTED_HOST` to match the reverse-proxy route. `SSH_PORT` controls only the container's inbound sshd listener; it is unrelated to token registration, which no longer requires container-to-proxy SSH.
 
 ## DSH and Codex profile
 
@@ -34,7 +51,7 @@ Set `SSH_PASSWORD` to a non-empty value to set the root password and enable SSH 
 
 The runner validates the sshd configuration, starts sshd and DSH as separately supervised process groups, and stops the peer when either service exits. It forwards container termination signals, escalates remaining process groups to SIGKILL after a grace period, and does not restart a failed service; configure any whole-container restart policy in the deployment layer.
 
-Run without privileged mode, Docker socket mounts, or host-root mounts. Container-root is not host-root. `DSH_TOKEN_REGISTER_URL` is optional and blank by default. When configured, the wrapper can post a valid launch token to that endpoint; token query parameters are removed from the emitted launch URL before logging, and the registration URL is not passed into the DSH process.
+Run without privileged mode, Docker socket mounts, or host-root mounts. Container-root is not host-root. The runner supports either the legacy optional `DSH_TOKEN_REGISTER_URL` HTTP `text/plain` registrar or the authenticated JSON proxy registrar configured by `DSH_PROXY_REGISTRATION_URL`, but rejects configuring both at once. Token query parameters are removed from the emitted launch URL before logging, and registration configuration is removed from the DSH child environment.
 
 Do not put credentials, private routes, local hostnames/domains/IPs, or token values in this public source. Store deployment-specific provider and routing settings in private appdata. No LICENSE file is included; none was requested.
 

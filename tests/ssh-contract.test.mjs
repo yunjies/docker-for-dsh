@@ -63,6 +63,22 @@ test('OpenSSH is installed at runtime, not baked into the image', () => {
   rejectsMutation(s => /-w \/data/.test(s), 'test -w /data', 'test -d /data', 'writable gate')
 })
 
+test('python3 is present in the image so manifest prerequisites resolve at startup', () => {
+  const installsPython3 = source => {
+    const install = /apt-get install -y --no-install-recommends([^\n]*)/.exec(source)
+    return install !== null && /(^|\s)python3(\s|$)/.test(install[1])
+  }
+  assert.equal(installsPython3(dockerfile), true, 'built image must install python3')
+  rejectsMutation(installsPython3,
+    'RUN apt-get update && apt-get install -y --no-install-recommends git python3',
+    'RUN apt-get update && apt-get install -y --no-install-recommends git',
+    'python3 in the build layer')
+  rejectsMutation(installsPython3,
+    'RUN apt-get update && apt-get install -y --no-install-recommends git python3',
+    'RUN apt-get update && apt-get install -y --no-install-recommends python3-pip',
+    'python3 package name, not a lookalike')
+})
+
 test('SSH_PASSWORD and SSH_PORT are captured safely; SSH identity remains root', () => {
   has(bootstrap, /dsh_ssh_password_value=\$\{SSH_PASSWORD:-\}/)
   has(bootstrap, /dsh_ssh_port_value=\$\{SSH_PORT:-22\}/)
@@ -195,7 +211,13 @@ test('E2E expects runtime SSH installation and keeps login fixed to root', () =>
 test('registration cancellation, spawn races, signal/timeout cleanup, and sibling stop are wired', () => {
   has(runner, /const registrationAbortController = new AbortController\(\)/)
   has(runner, /registrationAbortController\.abort\(\)/)
-  has(runner, /signal: AbortSignal\.any\(\[\s*registrationAbortController\.signal/)
+  const registrationSignalFlow = source => /const signal = AbortSignal\.any\(\[\s*registrationAbortController\.signal/.test(source)
+    && /await proxyRegistrationPublisher\(token, signal\)/.test(source)
+  assert.equal(registrationSignalFlow(runner), true)
+  rejectsMutation(registrationSignalFlow,
+    'const signal = AbortSignal.any([registrationAbortController.signal, AbortSignal.timeout(8000)])\nawait proxyRegistrationPublisher(token, signal)',
+    'const signal = AbortSignal.timeout(8000)\nawait proxyRegistrationPublisher(token, undefined)',
+    'proxy registration cancellation and timeout propagation')
   has(runner, /state\.child\.once\('spawn'/)
   has(runner, /state\.child\.on\('error'/)
   has(runner, /state\.child\.once\('close'/)
@@ -217,6 +239,28 @@ test('registration cancellation, spawn races, signal/timeout cleanup, and siblin
     "signalProcessTree(state, 'SIGKILL')", '/* no escalation */', 'SIGKILL escalation')
   rejectsMutation(s => /stopping the other service/.test(s),
     'exited; stopping the other service', 'exited', 'sibling shutdown')
+})
+
+test('proxy registration settings stay out of DSH and cannot conflict with the legacy registrar', () => {
+  const secretIsolation = source => [
+    'delete childEnv.DSH_PROXY_REGISTRATION_URL',
+    'delete childEnv.DSH_PROXY_REGISTRATION_SECRET_FILE',
+    'delete childEnv.DSH_PROXY_UPSTREAM_IP',
+    'delete childEnv.DSH_WEB_HOST_PORT',
+  ].every(line => source.includes(line))
+  assert.equal(secretIsolation(runner), true)
+  rejectsMutation(secretIsolation,
+    'delete childEnv.DSH_PROXY_REGISTRATION_URL\ndelete childEnv.DSH_PROXY_REGISTRATION_SECRET_FILE\ndelete childEnv.DSH_PROXY_UPSTREAM_IP\ndelete childEnv.DSH_WEB_HOST_PORT',
+    'delete childEnv.DSH_PROXY_REGISTRATION_URL\ndelete childEnv.DSH_PROXY_REGISTRATION_SECRET_FILE\ndelete childEnv.DSH_PROXY_UPSTREAM_IP',
+    'proxy registration secret removed from DSH child environment')
+
+  const exclusiveModes = source => source.includes('createProxyRegistrationPublisher(process.env)')
+    && source.includes('if (registerUrl && proxyRegistrationPublisher)')
+  assert.equal(exclusiveModes(runner), true)
+  rejectsMutation(exclusiveModes,
+    "const proxyRegistrationPublisher = createProxyRegistrationPublisher(process.env)\nif (registerUrl && proxyRegistrationPublisher) throw new Error('Configure either DSH_TOKEN_REGISTER_URL or DSH_PROXY_REGISTRATION_URL, not both.')",
+    'const proxyRegistrationPublisher = createProxyRegistrationPublisher(process.env)',
+    'exclusive legacy or JSON registration mode')
 })
 
 function integrationPathGuard(source) {

@@ -8,16 +8,17 @@ ENV DSH_HOME=/data/.dsh \
 LABEL org.opencontainers.image.source="https://github.com/yunjies/docker-for-dsh"
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git \
+    && apt-get install -y --no-install-recommends git python3 \
     && rm -rf /var/lib/apt/lists/* \
     && corepack enable \
     && corepack prepare pnpm@11.7.0 --activate
 
 COPY bootstrap.sh /usr/local/bin/dsh-bootstrap
 COPY dsh-web-runner.mjs /usr/local/bin/dsh-web-runner.mjs
+COPY proxy-token-registration.mjs /usr/local/bin/proxy-token-registration.mjs
 COPY dsh-home.patch.yml /opt/dsh-home.patch.yml
 RUN chmod 0755 /usr/local/bin/dsh-bootstrap \
-    && chmod 0644 /usr/local/bin/dsh-web-runner.mjs /opt/dsh-home.patch.yml \
+    && chmod 0644 /usr/local/bin/dsh-web-runner.mjs /usr/local/bin/proxy-token-registration.mjs /opt/dsh-home.patch.yml \
     && mkdir -p /workspace
 
 WORKDIR /workspace

@@ -1,0 +1,18 @@
+[Unit]
+Description=Authenticated DSH reverse-proxy registration API
+After=network.target nginx.service
+
+[Service]
+Type=simple
+User=dsh-token-registry
+Group=dsh-token-registry
+EnvironmentFile=/etc/dsh-token-registry/config
+ExecStart=/usr/bin/python3 /opt/dsh-token-registry/server.py
+Restart=on-failure
+RestartSec=2s
+UMask=0077
+PrivateTmp=true
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

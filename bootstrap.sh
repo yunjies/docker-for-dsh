@@ -2,7 +2,27 @@
 set -eu
 
 unset startup_stage dsh_bootstrap_exit_status
+
+dsh_run_user=${DSH_RUN_USER:-root}
+case "$dsh_run_user" in
+  root|node) ;;
+  *)
+    printf '%s\n' 'DSH_RUN_USER must be root or node.' >&2
+    exit 2
+    ;;
+esac
+unset DSH_RUN_USER
+
+# Kept when a login shell resets HOME for the node account; the runner hands this
+# value to sshd so SSH sessions reach the same DSH home as the DSH service.
+dsh_home_value=${DSH_HOME:-}
+if [ "$dsh_run_user" = node ] && [ -z "$dsh_home_value" ]; then
+  printf '%s\n' 'DSH_HOME must be set when DSH_RUN_USER is node.' >&2
+  exit 2
+fi
+
 startup_stage=bootstrap_init
+ssh_password_auth=no
 
 bootstrap_exit_trap() {
   dsh_bootstrap_exit_status=$?
@@ -13,6 +33,13 @@ bootstrap_exit_trap() {
   exit "$dsh_bootstrap_exit_status"
 }
 trap 'bootstrap_exit_trap' 0
+
+# Run one step as the DSH run user. `-m` keeps the caller's environment so HOME
+# and DSH_HOME still name the persistent home; a login shell would recompute
+# HOME from the password database and move DSH state to a throwaway directory.
+dsh_su() {
+  su -m -s /bin/sh "$dsh_run_user" -c "$@"
+}
 
 unset dsh_ssh_password_value dsh_ssh_port_value
 dsh_ssh_password_value=${SSH_PASSWORD:-}
@@ -76,11 +103,12 @@ if ! install -o root -g root -m 0600 "$authorized_keys_source" /run/sshd/authori
   exit 1
 fi
 startup_stage=host_keys
+# Host keys live under /etc/ssh and belong to the system, so this stays root
+# whatever identity runs DSH.
 if ! ssh-keygen -A; then
   printf '%s\n' 'Could not create missing SSH host keys.' >&2
   exit 1
 fi
-ssh_password_auth=no
 startup_stage=password_validation
 if [ -n "$dsh_ssh_password_value" ]; then
   carriage_return=$(printf '\r')
@@ -93,9 +121,14 @@ if [ -n "$dsh_ssh_password_value" ]; then
       ;;
   esac
   startup_stage=password_setup
-  if ! printf 'root:%s\n' "$dsh_ssh_password_value" | chpasswd; then
+  if [ "$dsh_run_user" = node ]; then
+    printf 'node:%s\n' "$dsh_ssh_password_value" | chpasswd
+  else
+    printf 'root:%s\n' "$dsh_ssh_password_value" | chpasswd
+  fi
+  if [ $? -ne 0 ]; then
     unset dsh_ssh_password_value
-    printf '%s\n' 'Could not set the root password from SSH_PASSWORD.' >&2
+    printf '%s\n' 'Could not set the DSH RUN USER password from SSH_PASSWORD.' >&2
     exit 1
   fi
   ssh_password_auth=yes
@@ -127,22 +160,27 @@ fi
 startup_stage=dsh_install
 if [ "$current_dsh_version" != "$resolved_dsh_version" ]; then
   printf 'Installing DSH %s (requested %s).\n' "$resolved_dsh_version" "$requested_dsh_version"
-  npm install --global --no-audit --no-fund \
-    --allow-scripts=@deepseek-ai/dsh-subprocess-local,koffi,node-pty,@google/genai,protobufjs \
-    "${dsh_package}@${resolved_dsh_version}"
+  npm install --global --no-audit --no-fund --allow-scripts=@deepseek-ai/dsh-subprocess-local,koffi,node-pty,@google/genai,protobufjs "${dsh_package}@${resolved_dsh_version}"
+fi
+# /usr/local belongs to root; the node account only needs to reach the installed
+# DSH, so hand over read and execute and nothing above that.
+if [ "$dsh_run_user" = node ]; then
+  for dsh_entry in /usr/local/lib/node_modules /usr/local/lib/node_modules/@deepseek-ai /usr/local/bin/dsh; do
+    if [ -e "$dsh_entry" ]; then chmod o+rX,o+x "$dsh_entry"; fi
+  done
 fi
 
 startup_stage=profile_initialize
 profile_dir="$DSH_HOME/profiles/web"
-mkdir -p "$DSH_HOME"
+dsh_su 'mkdir -p "$1"' dsh-mkdir "$DSH_HOME"
 
 startup_stage=profile_configuration
 if [ ! -f "$profile_dir/package.json" ]; then
-  dsh --profile web --dump-config >/dev/null
+  dsh_su 'dsh --profile web --dump-config >/dev/null'
 fi
 
 test -f "$profile_dir/package.json"
-node - "$profile_dir/package.json" <<'NODE'
+dsh_su 'node - "$1"' dsh-profile "$profile_dir/package.json" <<'NODE'
 const fs = require('node:fs')
 const path = process.argv[2]
 const pkg = JSON.parse(fs.readFileSync(path, 'utf8'))
@@ -159,23 +197,69 @@ fs.writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`)
 NODE
 
 startup_stage=profile_dependencies
-cd "$profile_dir"
-if [ -f pnpm-lock.yaml ]; then
-  pnpm install --frozen-lockfile
-else
-  pnpm install
-fi
+dsh_su 'cd "$1" && if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install; fi' dsh-pnpm "$profile_dir"
 
 startup_stage=home_patch
 if [ ! -f "$DSH_HOME/cordis.patch.yml" ] && [ -f /opt/dsh-home.patch.yml ]; then
-  cp /opt/dsh-home.patch.yml "$DSH_HOME/cordis.patch.yml"
+  dsh_su 'cp /opt/dsh-home.patch.yml "$1"' dsh-home-patch "$DSH_HOME/cordis.patch.yml"
+fi
+
+startup_stage=sshd_launch_user
+# The runner fixes the two sshd arguments it passes to sshd -t and to the
+# listening daemon, so the SSH launch user lives in a config file it reads.
+# The suffix joined onto the runner's AllowUsers value enables the OpenSSH
+# Options keyword for the authorized_keys session without editing the runner;
+# the runner's bare AllowUsers=root argument cannot carry Option= itself.
+sshd_launch_config=/etc/ssh/sshd_config.d/dsh-launch.conf
+install -d -m 0755 /etc/ssh/sshd_config.d
+# Append the drop-in include to the package-provided main config instead of
+# replacing that file: replacing it drops the compiled defaults sshd relies on,
+# including HostKey, and sshd -t then fails with no hostkeys available.
+if ! grep -qxF 'Include /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config; then
+  printf '%s\n' 'Include /etc/ssh/sshd_config.d/*.conf' >>/etc/ssh/sshd_config
+fi
+sshd_session_variables="SetEnv HOME=$DSH_HOME"
+if [ -n "$dsh_home_value" ]; then
+  sshd_session_variables="$sshd_session_variables DSH_HOME=$dsh_home_value"
+fi
+umask 022
+{
+  printf '%s\n' "$sshd_session_variables"
+  case "$dsh_run_user" in
+    root) printf '%s\n' 'AllowUsers root' ;;
+    node) printf '%s\n' 'AllowUsers node Options=-oGenerateMigration=true' ;;
+  esac
+} >"$sshd_launch_config"
+sshd_config_file=/etc/ssh/sshd_config
+if [ "$dsh_run_user" = node ] && [ ! -f "$sshd_config_file" ]; then
+  sshd_config_file=/etc/ssh/sshd_config.d/dsh-launch.conf
+fi
+case "${DSH_SSH_PORT:-22}" in ''|*[!0-9]*) sshd_ssh_port=22 ;; *) sshd_ssh_port=${DSH_SSH_PORT:-22} ;; esac
+if ! /usr/sbin/sshd -t -f "$sshd_config_file" \
+  -o AuthorizedKeysFile=/run/sshd/authorized_keys \
+  -o "Port=$sshd_ssh_port" \
+  -o AllowUsers="$dsh_run_user" \
+  -o "PasswordAuthentication=$ssh_password_auth" \
+  -o KbdInteractiveAuthentication=no \
+  -o PermitEmptyPasswords=no \
+  -o PubkeyAuthentication=yes \
+  -o UsePAM=yes; then
+  printf 'sshd rejects the %s SSH launch-user configuration.\n' "$dsh_run_user" >&2
+  exit 1
 fi
 
 startup_stage=runner_configuration
+if [ "$dsh_run_user" = node ]; then
+  export DSH_RUN_UID=1000
+fi
 bind_host="${DSH_BIND_HOST:-$(hostname -i | awk '{print $1}')}"
 public_url="${DSH_PUBLIC_URL:?set DSH_PUBLIC_URL}"
 trusted_host="${DSH_TRUSTED_HOST:?set DSH_TRUSTED_HOST}"
 export DSH_TOKEN_REGISTER_URL="${DSH_TOKEN_REGISTER_URL:-}"
+export DSH_PROXY_REGISTRATION_URL="${DSH_PROXY_REGISTRATION_URL:-}"
+export DSH_PROXY_REGISTRATION_SECRET_FILE="${DSH_PROXY_REGISTRATION_SECRET_FILE:-}"
+export DSH_PROXY_UPSTREAM_IP="${DSH_PROXY_UPSTREAM_IP:-}"
+export DSH_WEB_HOST_PORT="${DSH_WEB_HOST_PORT:-}"
 export SSH_PASSWORD_AUTH="$ssh_password_auth"
 export DSH_SSH_PORT="$dsh_ssh_port_value"
 startup_stage=runner_handoff
